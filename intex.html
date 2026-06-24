@@ -1,1 +1,419 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Suivi de charge</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@2.44.0/tabler-icons.min.css" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f5f5f3; color: #1a1a1a; min-height: 100vh; }
+    input, select { font-family: inherit; font-size: 14px; color: #1a1a1a; background: #fff; border: 0.5px solid #ccc; border-radius: 8px; padding: 0 12px; height: 38px; width: 100%; outline: none; transition: border-color .15s; }
+    input:focus, select:focus { border-color: #888; }
+    input[type=range] { height: auto; padding: 0; border: none; background: transparent; cursor: pointer; }
+    .btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; height: 38px; padding: 0 16px; border-radius: 8px; border: 0.5px solid #ccc; background: transparent; color: #1a1a1a; font-size: 13px; font-family: inherit; cursor: pointer; transition: background .12s; white-space: nowrap; }
+    .btn:hover { background: #f0f0ee; }
+    .btn:active { transform: scale(.98); }
+    .btn-primary { background: #1a1a1a; color: #fff; border-color: #1a1a1a; }
+    .btn-primary:hover { opacity: .85; background: #1a1a1a; }
+    .btn-danger { color: #791F1F; border-color: #F09595; }
+    .btn-danger:hover { background: #FCEBEB; }
+    .card { background: #fff; border: 0.5px solid #e0e0de; border-radius: 12px; }
+    .nav-tab { height: 34px; padding: 0 14px; border-radius: 6px; border: none; background: transparent; color: #666; font-size: 13px; font-family: inherit; cursor: pointer; transition: all .12s; display: flex; align-items: center; gap: 6px; }
+    .nav-tab.active { background: #fff; color: #1a1a1a; font-weight: 500; }
+    .row-item { cursor: pointer; transition: background .1s; }
+    .row-item:hover { background: #f5f5f3; }
+    .type-btn { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 10px 4px; border-radius: 8px; border: 0.5px solid #e0e0de; background: transparent; cursor: pointer; transition: all .12s; flex: 1; }
+    .type-btn:hover { background: #f5f5f3; }
+    .type-btn.sel { border: 1.5px solid #888; background: #f5f5f3; }
+    .wrap { max-width: 640px; margin: 0 auto; padding: 1.5rem 1rem 3rem; }
+    label { font-size: 12px; color: #666; display: block; margin-bottom: 5px; }
+    .field { display: flex; flex-direction: column; gap: 0; }
+    .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .mt { margin-top: 14px; }
+    .toast { font-size: 12px; color: #27500A; display: flex; align-items: center; gap: 4px; }
+    .empty { text-align: center; padding: 3rem 2rem; }
+    .empty i { font-size: 30px; color: #ccc; display: block; margin-bottom: 10px; }
+    .section-title { font-size: 12px; font-weight: 500; color: #666; display: flex; align-items: center; gap: 6px; margin-bottom: 6px; }
+    .activity-row { display: flex; justify-content: space-between; align-items: center; padding: 8px 10px; background: #f5f5f3; border-radius: 8px; margin-bottom: 4px; font-size: 13px; }
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <div id="app"></div>
+</div>
 
+<script>
+const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbxo5h7UDGZzOYmhwkEDj87sXHcAaMVyD1jmDKyYUTmIVrl-J67m914lHFDDgqxE8pCV/exec";
+const PATRON_PASSWORD = "patron2024";
+const H = 39;
+
+const STATUS = [
+  { key:"dispo",  label:"Disponible", bg:"#EAF3DE", border:"#97C459", text:"#27500A", max:60 },
+  { key:"charge", label:"Chargé",     bg:"#FAEEDA", border:"#EF9F27", text:"#633806", max:95 },
+  { key:"chaud",  label:"Surchargé",  bg:"#FCEBEB", border:"#F09595", text:"#791F1F", max:999 },
+];
+const TYPES = [
+  { key:"récurrent", icon:"ti-repeat",         label:"Récurrent", dates:false },
+  { key:"ponctuel",  icon:"ti-calendar-event",  label:"Ponctuel",  dates:true  },
+  { key:"formation", icon:"ti-school",          label:"Formation", dates:true  },
+  { key:"astreinte", icon:"ti-bell",            label:"Astreinte", dates:false },
+  { key:"congé",     icon:"ti-beach",           label:"Congé",     dates:true  },
+];
+
+const getS   = h => STATUS.find(s => Math.round((h/H)*100) <= s.max) || STATUS[2];
+const pct    = h => Math.round((h/H)*100);
+const tInfo  = k => TYPES.find(t => t.key === k) || TYPES[0];
+const ini    = n => n.trim().split(" ").map(w=>w[0]).join("").toUpperCase().slice(0,2);
+const palettes=[["#E6F1FB","#0C447C"],["#EAF3DE","#27500A"],["#FAEEDA","#633806"],["#EEEDFE","#3C3489"],["#E1F5EE","#085041"]];
+const pal    = n => palettes[n.charCodeAt(0)%5];
+
+let state = { mode:"salarie", nom:"", confirmed:false, data:[], editing:null, loading:false, toast:"", pw:"", pwErr:"", selected:null };
+
+async function apiCall(params) {
+  const qs = new URLSearchParams(params).toString();
+  const res = await fetch(`${SCRIPT_URL}?${qs}`);
+  if (!res.ok) throw new Error("Erreur réseau");
+  return res.json();
+}
+
+async function fetchData() {
+  state.loading = true; render();
+  try {
+    const json = await apiCall({});
+    state.data = Array.isArray(json) ? json : [];
+  } catch(e) { console.error(e); }
+  state.loading = false; render();
+}
+
+function setState(patch) { Object.assign(state, patch); render(); }
+
+function avatar(nom, size=38) {
+  const [bg,fg] = pal(nom);
+  return `<div style="width:${size}px;height:${size}px;border-radius:50%;background:${bg};color:${fg};display:flex;align-items:center;justify-content:center;font-size:${size*.35}px;font-weight:500;flex-shrink:0">${ini(nom)}</div>`;
+}
+
+function statusPill(h) {
+  const s=getS(h);
+  return `<span style="background:${s.bg};color:${s.text};border:0.5px solid ${s.border};font-size:11px;padding:3px 10px;border-radius:20px;font-weight:500;white-space:nowrap">${s.label} · ${h}h/${H}h · ${pct(h)}%</span>`;
+}
+
+function hbar(h) {
+  const s=getS(h);
+  return `<div style="height:5px;background:#f0f0ee;border-radius:3px;overflow:hidden;margin-top:6px"><div style="height:100%;width:${Math.min(pct(h),100)}%;background:${s.border};border-radius:3px;transition:width .4s"></div></div>`;
+}
+
+function typePicker(val) {
+  return `<div style="display:flex;gap:6px">${TYPES.map(tp=>`
+    <button class="type-btn${val===tp.key?" sel":""}" onclick="selectType('${tp.key}')">
+      <i class="ti ${tp.icon}" style="font-size:17px;color:${val===tp.key?"#1a1a1a":"#888"}"></i>
+      <span style="font-size:11px;color:${val===tp.key?"#1a1a1a":"#888"};font-weight:${val===tp.key?500:400}">${tp.label}</span>
+    </button>`).join("")}</div>`;
+}
+
+function activityForm(isEdit) {
+  const f = state.formData || { activite:"", type:"récurrent", debut:"", fin:"", heures:8, note:"" };
+  const s = getS(f.heures);
+  const t = tInfo(f.type);
+  return `
+  <div class="card" style="padding:1.25rem;margin-bottom:16px">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:18px">
+      <span style="font-size:15px;font-weight:500">${isEdit?"Modifier l'activité":"Nouvelle activité"}</span>
+      <button onclick="setState({editing:null,formData:null})" style="background:transparent;border:none;cursor:pointer;color:#888;font-size:20px;line-height:1;padding:0 4px">✕</button>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:14px">
+      <div><label>Nom de l'activité</label>
+        <input id="f-activite" value="${f.activite}" oninput="updateForm('activite',this.value)" placeholder="Ex : Projet EDF, Réunion hebdo..." />
+      </div>
+      <div><label>Type</label>${typePicker(f.type)}</div>
+      ${t.dates?`<div class="grid2">
+        <div><label>Début</label><input type="date" id="f-debut" value="${f.debut}" oninput="updateForm('debut',this.value)" /></div>
+        <div><label>Fin</label><input type="date" id="f-fin" value="${f.fin}" oninput="updateForm('fin',this.value)" /></div>
+      </div>`:""}
+      <div>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:5px">
+          <label style="margin:0">Heures par semaine</label>
+          <span id="charge-pill" style="font-size:12px;font-weight:500;color:${s.text};background:${s.bg};padding:2px 10px;border-radius:20px;border:0.5px solid ${s.border}">${f.heures}h · ${pct(f.heures)}%</span>
+        </div>
+        <input type="range" min="0.5" max="39" step="0.5" value="${f.heures}" oninput="updateHeures(this.value)" style="width:100%" />
+        <div style="display:flex;justify-content:space-between;font-size:11px;color:#aaa;margin-top:3px">
+          <span>0.5h</span><span>10h</span><span>20h</span><span>30h</span><span>39h</span>
+        </div>
+      </div>
+      <div><label>Note <span style="color:#aaa">(optionnel)</span></label>
+        <input id="f-note" value="${f.note}" oninput="updateForm('note',this.value)" placeholder="Client, contexte..." />
+      </div>
+    </div>
+    <div id="form-err" style="color:#791F1F;font-size:13px;margin-top:10px;display:none"></div>
+    <div style="display:flex;gap:8px;margin-top:18px">
+      <button class="btn btn-primary" onclick="saveActivity(${isEdit})" style="flex:1" id="save-btn">${isEdit?"Enregistrer":"Ajouter l'activité"}</button>
+      ${isEdit?`<button class="btn btn-danger" onclick="deleteActivity()"><i class="ti ti-trash" style="font-size:14px"></i> Supprimer</button>`:""}
+    </div>
+  </div>`;
+}
+
+function renderSalarie() {
+  if (!state.confirmed) return `
+    <div style="max-width:360px;margin:3rem auto">
+      <div class="card" style="padding:2rem">
+        <div style="text-align:center;margin-bottom:20px">
+          <div style="width:48px;height:48px;border-radius:50%;background:#f0f0ee;display:flex;align-items:center;justify-content:center;margin:0 auto 12px">
+            <i class="ti ti-user" style="font-size:22px;color:#888"></i>
+          </div>
+          <p style="font-size:15px;font-weight:500">Qui es-tu ?</p>
+          <p style="font-size:13px;color:#666;margin-top:4px">Saisis ton nom pour accéder à tes activités.</p>
+        </div>
+        <input id="nom-input" value="${state.nom}" oninput="setState({nom:this.value})" onkeydown="if(event.key==='Enter'&&this.value.trim())confirmNom()" placeholder="Prénom Nom" style="margin-bottom:12px" autofocus />
+        <button class="btn btn-primary" style="width:100%" onclick="confirmNom()">Continuer <i class="ti ti-arrow-right" style="font-size:13px"></i></button>
+      </div>
+    </div>`;
+
+  const myRows = state.data.filter(r=>r[0]?.toLowerCase().trim()===state.nom.toLowerCase().trim());
+  const totalH = myRows.reduce((s,r)=>s+(Number(r[5])||0),0);
+  const s = getS(totalH);
+  const isEditing = state.editing !== null;
+
+  return `
+    <div style="max-width:580px;margin:0 auto">
+      <div class="card" style="padding:1rem 1.25rem;margin-bottom:16px">
+        <div style="display:flex;align-items:center;gap:12px">
+          ${avatar(state.nom,44)}
+          <div style="flex:1">
+            <div style="font-size:15px;font-weight:500">${state.nom}</div>
+            <div style="margin-top:4px">${myRows.length>0?statusPill(totalH):'<span style="font-size:13px;color:#666">Aucune activité</span>'}</div>
+          </div>
+          <div style="display:flex;gap:8px;align-items:center">
+            ${state.toast?`<span class="toast"><i class="ti ti-check" style="font-size:12px"></i> ${state.toast}</span>`:""}
+            <button class="btn" onclick="setState({confirmed:false,editing:null,formData:null})" style="font-size:12px">Changer</button>
+            <button class="btn btn-primary" onclick="startAdd()" ${isEditing?"disabled":""} style="opacity:${isEditing?.5:1}"><i class="ti ti-plus" style="font-size:13px"></i> Ajouter</button>
+          </div>
+        </div>
+        ${myRows.length>0?hbar(totalH):""}
+      </div>
+
+      ${isEditing ? activityForm(state.editing!=="new") : ""}
+
+      ${state.loading&&!isEditing?'<div style="text-align:center;padding:2rem;color:#888;font-size:13px">Chargement...</div>':""}
+
+      ${!state.loading&&!isEditing&&myRows.length===0?`
+        <div class="card empty">
+          <i class="ti ti-clipboard"></i>
+          <p style="font-size:14px;font-weight:500">Aucune activité cette semaine</p>
+          <p style="font-size:13px;color:#666;margin-top:4px;margin-bottom:16px">Déclare tes tâches pour que ton manager voie ta charge.</p>
+          <button class="btn btn-primary" onclick="startAdd()"><i class="ti ti-plus" style="font-size:13px"></i> Première activité</button>
+        </div>`:""}
+
+      ${!isEditing&&myRows.length>0?`
+        <div class="card">
+          ${myRows.map((row,i)=>{
+            const tp=tInfo(row[2]);
+            const rs=getS(Number(row[5])||0);
+            return `<div class="row-item" onclick="startEdit(${i})" style="display:flex;align-items:center;gap:12px;padding:12px 16px;border-bottom:${i<myRows.length-1?"0.5px solid #f0f0ee":"none"};border-radius:${i===0?"12px 12px 0 0":i===myRows.length-1?"0 0 12px 12px":"0"}">
+              <div style="width:34px;height:34px;border-radius:8px;background:#f5f5f3;display:flex;align-items:center;justify-content:center;flex-shrink:0">
+                <i class="ti ${tp.icon}" style="font-size:16px;color:#888"></i>
+              </div>
+              <div style="flex:1;min-width:0">
+                <div style="font-size:14px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${row[1]}</div>
+                <div style="font-size:12px;color:#888;margin-top:2px">${tp.label}${row[3]!=="—"?` · ${row[3]} → ${row[4]}`:""}${row[6]?` · ${row[6]}`:""}</div>
+              </div>
+              <div style="text-align:right;flex-shrink:0">
+                <div style="font-size:14px;font-weight:500;color:${rs.text}">${row[5]}h</div>
+                <div style="font-size:11px;color:#aaa">${pct(Number(row[5]))}%</div>
+              </div>
+              <i class="ti ti-chevron-right" style="font-size:15px;color:#ccc"></i>
+            </div>`;
+          }).join("")}
+          <div style="display:flex;justify-content:space-between;padding:10px 16px;border-top:0.5px solid #f0f0ee;background:#f9f9f7;border-radius:0 0 12px 12px">
+            <span style="font-size:13px;color:#666">Total semaine</span>
+            <span style="font-size:13px;font-weight:500;color:${s.text}">${totalH}h / ${H}h — ${pct(totalH)}%</span>
+          </div>
+        </div>`:""}
+    </div>`;
+}
+
+function renderPatron() {
+  const byEmp = state.data.reduce((acc,row)=>{ const n=row[0]; if(!n) return acc; if(!acc[n]) acc[n]=[]; acc[n].push(row); return acc; },{});
+  const emps = Object.entries(byEmp).map(([nom,rows])=>({nom,rows,totalH:rows.reduce((s,r)=>s+(Number(r[5])||0),0)})).sort((a,b)=>b.totalH-a.totalH);
+  const counts={dispo:0,charge:0,chaud:0};
+  emps.forEach(e=>counts[getS(e.totalH).key]++);
+
+  return `
+    <div style="max-width:620px;margin:0 auto">
+      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:20px">
+        ${[
+          {key:"dispo", icon:"ti-circle-check",  label:"Disponibles", bg:"#EAF3DE", text:"#27500A"},
+          {key:"charge",icon:"ti-alert-triangle", label:"Chargés",     bg:"#FAEEDA", text:"#633806"},
+          {key:"chaud", icon:"ti-flame",          label:"Surchargés",  bg:"#FCEBEB", text:"#791F1F"},
+        ].map(c=>`<div style="background:${c.bg};border-radius:10px;padding:14px 16px">
+          <i class="ti ${c.icon}" style="font-size:18px;color:${c.text}"></i>
+          <div style="font-size:26px;font-weight:500;color:${c.text};margin-top:6px">${counts[c.key]}</div>
+          <div style="font-size:12px;color:${c.text}">${c.label}</div>
+        </div>`).join("")}
+      </div>
+
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+        <span style="font-size:13px;color:#666">Charge équipe</span>
+        <button class="btn" onclick="fetchData()" style="font-size:12px"><i class="ti ti-refresh" style="font-size:13px"></i> Actualiser</button>
+      </div>
+
+      ${state.loading?'<div style="text-align:center;padding:2rem;color:#888;font-size:13px">Chargement...</div>':""}
+      ${!state.loading&&emps.length===0?'<div style="text-align:center;padding:3rem;color:#888;font-size:13px">Aucune activité déclarée.</div>':""}
+
+      ${emps.length>0?`<div class="card">
+        ${emps.map(({nom,totalH},i)=>{
+          const s=getS(totalH);
+          const isOpen=state.selected===nom;
+          const emp=emps.find(e=>e.nom===nom);
+          return `<div style="border-bottom:${i<emps.length-1?"0.5px solid #f0f0ee":"none"};border-radius:${i===0?"12px 12px 0 0":i===emps.length-1?"0 0 12px 12px":"0"};overflow:hidden">
+            <div class="row-item" onclick="toggleEmp('${nom}')" style="display:flex;align-items:center;gap:12px;padding:12px 16px;background:${isOpen?"#f5f5f3":"transparent"}">
+              ${avatar(nom,36)}
+              <div style="flex:1;min-width:0">
+                <div style="display:flex;justify-content:space-between;align-items:center">
+                  <span style="font-size:14px;font-weight:500">${nom}</span>
+                  <span style="font-size:12px;font-weight:500;color:${s.text}">${totalH}h · ${pct(totalH)}%</span>
+                </div>
+                ${hbar(totalH)}
+                <div style="display:flex;justify-content:space-between;margin-top:4px;font-size:11px">
+                  <span style="color:${s.text}">${s.label}</span>
+                  <span style="color:#aaa">${Math.max(0,H-totalH)}h libres</span>
+                </div>
+              </div>
+              <i class="ti ${isOpen?"ti-chevron-up":"ti-chevron-down"}" style="font-size:15px;color:#ccc;flex-shrink:0"></i>
+            </div>
+            ${isOpen&&emp?`<div style="padding:14px 16px;border-top:0.5px solid #f0f0ee;background:#f9f9f7">
+              ${TYPES.filter(t=>emp.rows.some(r=>r[2]===t.key)).map(tp=>`
+                <div style="margin-bottom:12px">
+                  <div class="section-title"><i class="ti ${tp.icon}" style="font-size:13px"></i>${tp.label}</div>
+                  ${emp.rows.filter(r=>r[2]===tp.key).map(row=>`
+                    <div class="activity-row">
+                      <div>
+                        <div style="font-weight:500">${row[1]}</div>
+                        ${row[3]!=="—"?`<div style="font-size:11px;color:#aaa;margin-top:1px">${row[3]} → ${row[4]}</div>`:""}
+                        ${row[6]?`<div style="font-size:11px;color:#aaa;font-style:italic;margin-top:1px">${row[6]}</div>`:""}
+                      </div>
+                      <span style="font-weight:500;margin-left:12px;flex-shrink:0;color:${getS(Number(row[5])).text}">${row[5]}h/sem</span>
+                    </div>`).join("")}
+                </div>`).join("")}
+            </div>`:""}
+          </div>`;
+        }).join("")}
+      </div>`:""}
+    </div>`;
+}
+
+function renderLogin() {
+  return `
+    <div style="max-width:340px;margin:3rem auto">
+      <div class="card" style="padding:2rem">
+        <div style="text-align:center;margin-bottom:20px">
+          <div style="width:48px;height:48px;border-radius:50%;background:#f0f0ee;display:flex;align-items:center;justify-content:center;margin:0 auto 12px">
+            <i class="ti ti-lock" style="font-size:22px;color:#888"></i>
+          </div>
+          <p style="font-size:15px;font-weight:500">Accès manager</p>
+          <p style="font-size:13px;color:#666;margin-top:4px">Réservé au responsable d'équipe.</p>
+        </div>
+        <input type="password" id="pw-input" value="${state.pw}" oninput="setState({pw:this.value})" onkeydown="if(event.key==='Enter')tryPatron()" placeholder="Mot de passe" style="margin-bottom:10px" />
+        ${state.pwErr?`<p style="color:#791F1F;font-size:13px;margin-bottom:10px">${state.pwErr}</p>`:""}
+        <button class="btn btn-primary" style="width:100%" onclick="tryPatron()">Accéder <i class="ti ti-arrow-right" style="font-size:13px"></i></button>
+      </div>
+    </div>`;
+}
+
+function render() {
+  const app = document.getElementById("app");
+  const patronActive = state.mode==="patron"||state.mode==="login";
+  app.innerHTML = `
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:24px">
+      <div style="display:flex;align-items:center;gap:10px">
+        <div style="width:32px;height:32px;border-radius:8px;background:#f0f0ee;display:flex;align-items:center;justify-content:center">
+          <i class="ti ti-chart-bar" style="font-size:17px"></i>
+        </div>
+        <span style="font-size:15px;font-weight:500">Suivi de charge</span>
+      </div>
+      <div style="display:flex;gap:3px;background:#f0f0ee;border-radius:8px;padding:3px">
+        <button class="nav-tab${state.mode==="salarie"?" active":""}" onclick="setState({mode:'salarie'})"><i class="ti ti-user" style="font-size:13px"></i>Salarié</button>
+        <button class="nav-tab${patronActive?" active":""}" onclick="goPatron()"><i class="ti ti-shield" style="font-size:13px"></i>Patron</button>
+      </div>
+    </div>
+    ${state.mode==="salarie"?renderSalarie():""}
+    ${state.mode==="login"?renderLogin():""}
+    ${state.mode==="patron"?renderPatron():""}
+  `;
+}
+
+function confirmNom() {
+  if (!state.nom.trim()) return;
+  state.confirmed = true;
+  fetchData();
+}
+
+function goPatron() { if (state.mode!=="patron") setState({mode:"login"}); }
+
+function tryPatron() {
+  if (state.pw===PATRON_PASSWORD) { state.mode="patron"; state.pwErr=""; fetchData(); }
+  else setState({pwErr:"Mot de passe incorrect."});
+}
+
+function toggleEmp(nom) { setState({selected:state.selected===nom?null:nom}); }
+
+function startAdd() {
+  state.formData = { activite:"", type:"récurrent", debut:"", fin:"", heures:8, note:"" };
+  setState({editing:"new"});
+}
+
+function startEdit(idx) {
+  const myRows = state.data.filter(r=>r[0]?.toLowerCase().trim()===state.nom.toLowerCase().trim());
+  const row = myRows[idx];
+  state.formData = { activite:row[1], type:row[2], debut:row[3]==="—"?"":row[3], fin:row[4]==="—"?"":row[4], heures:Number(row[5])||0, note:row[6]||"", _row:row };
+  setState({editing:row});
+}
+
+function selectType(type) {
+  state.formData = {...state.formData, type};
+  render();
+}
+
+function updateForm(key, val) { state.formData = {...state.formData, [key]:val}; }
+
+function updateHeures(val) {
+  state.formData = {...state.formData, heures:Number(val)};
+  const s = getS(Number(val));
+  const pill = document.getElementById("charge-pill");
+  if (pill) { pill.textContent=`${val}h · ${pct(Number(val))}%`; pill.style.color=s.text; pill.style.background=s.bg; pill.style.borderColor=s.border; }
+}
+
+async function saveActivity(isEdit) {
+  const f = state.formData;
+  const t = tInfo(f.type);
+  const errEl = document.getElementById("form-err");
+  const btn = document.getElementById("save-btn");
+  if (!f.activite.trim()) { errEl.textContent="Nom requis."; errEl.style.display="block"; return; }
+  if (t.dates&&(!f.debut||!f.fin)) { errEl.textContent="Dates requises."; errEl.style.display="block"; return; }
+  errEl.style.display="none";
+  btn.textContent="..."; btn.disabled=true;
+  try {
+    await apiCall({ action:isEdit?"update":"add", nom:state.nom, oldActivite:f._row?f._row[1]:"", activite:f.activite, type:f.type, debut:f.debut||"—", fin:f.fin||"—", charge:f.heures, note:f.note });
+    state.editing=null; state.formData=null;
+    state.toast = isEdit?"✓ Modifié !":"✓ Ajouté !";
+    setTimeout(()=>{ state.toast=""; render(); }, 2500);
+    fetchData();
+  } catch(e) { errEl.textContent="Erreur réseau : "+e.message; errEl.style.display="block"; btn.textContent=isEdit?"Enregistrer":"Ajouter l'activité"; btn.disabled=false; }
+}
+
+async function deleteActivity() {
+  if (!confirm("Supprimer cette activité ?")) return;
+  const f = state.formData;
+  try {
+    await apiCall({ action:"delete", nom:state.nom, activite:f._row[1] });
+    state.editing=null; state.formData=null;
+    state.toast="✓ Supprimé.";
+    setTimeout(()=>{ state.toast=""; render(); }, 2500);
+    fetchData();
+  } catch(e) { alert("Erreur : "+e.message); }
+}
+
+fetchData();
+render();
+</script>
+</body>
+</html>
